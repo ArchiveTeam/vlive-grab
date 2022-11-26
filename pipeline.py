@@ -59,7 +59,7 @@ if not WGET_AT:
 #
 # Update this each time you make a non-cosmetic change.
 # It will be added to the WARC files and reported to the tracker.
-VERSION = '20221124.01'
+VERSION = '20221126.01'
 USER_AGENT = 'Archive Team'
 TRACKER_ID = 'vlive'
 TRACKER_HOST = 'legacy-api.arpa.li'
@@ -271,13 +271,19 @@ class WgetArgs(object):
             '--warc-zstd-dict', ItemInterpolation('%(item_dir)s/zstdict'),
         ])
 
+        assert '\0' not in item['item_name']
+
         for item_name in item['item_name'].split('\0'):
             wget_args.extend(['--warc-header', 'x-wget-at-project-item-name: '+item_name])
             wget_args.append('item-name://'+item_name)
             item_type, item_value = item_name.split(':', 1)
-            if item_type == 'site':
+            if item_type == 'video':
                 wget_args.extend(['--warc-header', 'vlive-video: '+item_value])
                 wget_args.append('https://www.vlive.tv/video/'+item_value)
+            elif item_type == 'vphinf':
+                url = 'https://v-phinf.pstatic.net/' + item_value
+                wget_args.extend(['--warc-header', 'vlive-resource: '+url])
+                wget_args.append(url)
             else:
                 raise Exception('Unknown item')
 

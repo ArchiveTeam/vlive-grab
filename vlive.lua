@@ -31,11 +31,17 @@ local ids = {}
 
 local retry_url = false
 
+local app_id = nil
 local user_country = nil
 local post_id = nil
 local channel_code = nil
 local vod_id = nil
 local locale = nil
+local vphinf_types = {}
+
+for vphinf_type in io.open("vphinf-types.txt", "r"):lines() do
+  vphinf_types[vphinf_type] = true
+end
 
 for ignore in io.open("ignore-list", "r"):lines() do
   downloaded[ignore] = true
@@ -77,15 +83,19 @@ processed = function(url)
 end
 
 discover_item = function(target, item)
-print('queuing' , item)
   if not target[item] then
+--print('queuing' , item)
     target[item] = true
   end
 end
 
 find_item = function(url)
-  value = string.match(url, "^https?://www%.vlive%.tv/video/([0-9]+$")
+  value = string.match(url, "^https?://www%.vlive%.tv/video/([0-9]+)$")
   type_ = "video"
+  if not value then
+    value = string.match(url, "^https?://v%-phinf%.pstatic%.net/([^%?]+)")
+    type_ = "vphinf"
+  end
   if value then
     item_type = type_
     item_value = value
@@ -102,14 +112,62 @@ find_item = function(url)
 end
 
 allowed = function(url, parenturl)
-  if not string.match(url, "^https?://[^/]*vlive%.tv/") then
+  if ids[url] then
+    return true
+  end
+
+  if string.match(url, "^https?://v%.phinf%.naver%.net/") then
+    local newurl = "https://v-phinf.pstatic.net/" .. string.match(url, "^https?://[^/]+/(.+)")
+    return allowed(newurl, parenturl)
+  end
+
+  if string.match(url, "sprite_.+_$") then
     return false
   end
 
-  for s in string.gmatch(url, "([0-9]+)") do
-    if ids[s] then
-      return true
+  if string.match(url, "^https?://[^/]*naver%.net/.") then
+    error("Found odd naver.net URL.")
+  end
+
+  if string.match(url, "^https?://[^/]*vlive%.tv/") then
+    for s in string.gmatch(url, "([0-9]+)") do
+      if ids[s] then
+        return true
+      end
     end
+  end
+
+  if string.match(url, "^https?://[^/]*vlive%.tv/globalv%-web/")
+    or string.match(url, "^https?://apis%.naver%.com/rmcnmv/rmcnmv/") then
+    return true
+  end
+
+  if string.match(url, "^https?://[^/]*pstatic%.net/") then
+    local pstatic_sub = string.match(url, "^https?://([^%.]+)%.")
+    if pstatic_sub then
+      if string.match(pstatic_sub, "static") or pstatic_sub == "ssl" then
+        discover_item(discovered_outlinks, url)
+      elseif pstatic_sub == "v-phinf" then
+        if item_type == "vphinf" then
+          return true
+        end
+        local new_item = string.match(url, "^https?://[^/]+/+([^%?]+)")
+        if new_item then
+          discover_item(discovered_items, "vphinf:" .. new_item)
+        end
+      else
+        return true
+      end
+    else
+      discover_item(discovered_outlinks, url)
+    end
+    return false
+  end
+
+  if not string.match(url, "^https?://[^/]*vlive%.tv/")
+    and not string.match(url, "^https?://[^/]*pstatic%.net/")
+    and not string.match(url, "^https?://[^/]*akamaized.net/") then
+    discover_item(discovered_outlinks, url)
   end
 
   return false
@@ -157,7 +215,16 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
     end
     if not processed(url_)
       and allowed(url_, origurl) then
-      table.insert(urls, { url=url_ })
+      if string.match(url_, "/globalv%-web/") and item_type == "video" then
+        table.insert(urls, {
+          url=url_,
+          headers={
+            ["Referer"]="https://www.vlive.tv/video/" .. item_type
+          }
+        })
+      else
+        table.insert(urls, { url=url_ })
+      end
       addedtolist[url_] = true
       addedtolist[url] = true
     end
@@ -214,40 +281,82 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
     end
   end
 
+  local function extract_from_json(json)
+    local channel_code = nil
+    local member_id = nil
+    for k, v in pairs(json) do
+      if type(v) == "table" then
+        extract_from_json(v)
+      elseif string.match(string.lower(k), "body") then
+        for newurl in string.gmatch(v, "(https?://[^%./]+%.[^%s<>#\"'\\`{}%)%]]+)") do
+          while string.match(newurl, ".[%?&%.&,!;]$") do
+            newurl = string.match(newurl, "^(.+).$")
+          end
+          check(newurl)
+        end
+      elseif string.lower(k) == "channelcode" then
+        channel_code = v
+        discover_item(discovered_items, "channel:" .. channel_code)
+      elseif string.lower(k) == "memberid" then
+        member_id = v
+        discover_item(discovered_items, "member:" .. member_id)
+      end
+    end
+    if member_id and channel_code then
+      discover_item(discovered_items, "channel-member:" .. channel_code .. ":" .. member_id)
+    end
+  end
+
   local function extract_one(data, pattern)
     local result = nil
     for s in string.gmatch(data, pattern) do
       if result then
-        error()
+        error("Pattern " .. pattern .. " already extracted.")
       end
       result = s
+    end
+    if not result then
+      error("Pattern " .. pattern .. " not found.")
     end
     return result
   end
 
-  if allowed(url) and status_code < 300 then
+  if item_type == "vphinf" then
+    if not string.match(url, "%?") then
+      for type_, _ in pairs(vphinf_types) do
+        check(url .. "?type=" .. type_)
+      end
+    end
+    return urls
+  end
+
+  if allowed(url)
+    and status_code < 300
+    and not string.match(url, "^https?://[^/]*pstatic%.net/")
+    and not string.match(url, "^https?://[^/]*akamaized%.net") then
     html = read_file(file)
     if item_type == "video" then
       if string.match(url, "/video/[0-9]+$") then
         local js_main_url = string.match(html, '<script%s+src="([^"]+/js/main%.[^"]+%.js)"%s*>')
         local body, _, _, _ = https.request(js_main_url)
-        local app_id = extract_one(body, 'appId="([^"]+)"')
+        app_id = extract_one(body, 'appId="([^"]+)"')
         local fields_me = extract_one(body, '{var%s+t="/member/v1%.0/channel%-"%.concat%(e,"/me"%),n={fields:"([^"]+)"};')
         local fields_grouped_boards = extract_one(body, '{var%s+a="/board/v1%.0/channel%-"%.concat%(e,"/groupedBoards"%),r={fields:"([^"]+)"};')
         local fields_star_comments = extract_one(body, '"/starComments%?([^"]+)"')
-        local fields_comments = extract_one(body, '"/comments%?([^"]+)"')
+        local fields_comments = extract_one(body, '"/comments%?([^"]+&startFrom=first[^"]*)"')
         local json = JSON:decode(string.match(html, "__PRELOADED_STATE__=({.-}),function"))
+        extract_from_json(json)
         user_country = json["common"]["userCountry"]
-        post_id = json["postDetails"]["post"]["postId"]
-        channel_code = json["postDetails"]["post"]["channelCode"]
-        vod_id = json["postDetails"]["post"]["officialVideo"]["vodId"]
+        post_id = json["postDetail"]["post"]["postId"]
+        channel_code = json["postDetail"]["post"]["channelCode"]
+        vod_id = json["postDetail"]["post"]["officialVideo"]["vodId"]
         locale = "en_US"
         local gcc_locale = "&gcc=" .. user_country .. "&locale=" .. locale
         local app_id_gcc_locale = "?appId=" .. app_id .. gcc_locale
-        check(
+        --[[check(
           "https://www.vlive.tv/globalv-web/vam-web/post/v1.0/post-" .. post_id .. "/read"
           .. app_id_gcc_locale
-        )
+        )]]
         check(
           "https://www.vlive.tv/globalv-web/vam-web/video/v1.0/vod/" .. item_value .. "/inkey"
           .. "?appId=" .. app_id
@@ -281,7 +390,7 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
           .. "&" .. fields_star_comments
           .. gcc_locale
         )
-        for _, sort_type in pairs({"MOST_POPULAR", "OLDEST", "LATEST"}) do
+        for _, sort_type in pairs({"MOST_POPULAR"}) do --, "OLDEST", "LATEST"}) do
           check(
             "https://www.vlive.tv/globalv-web/vam-web/comment/v1.0/post-" .. post_id .. "/comments"
             .. "?appId=" .. app_id
@@ -324,8 +433,9 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
       end
       if string.match(url, "/vod/play/v2%.0/") then
         local json = JSON:decode(html)
+        extract_from_json(json)
         local count = 0
-        for _, stream_data in pairs(json["stream"]) do
+        for _, stream_data in pairs(json["streams"]) do
           count = count + 1
           local max_size = nil
           local max_data = nil
@@ -337,16 +447,18 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
             end
           end
           if not max_data then
-            error()
+            error("No max video size found.")
           end
           local params = ""
           for _, key_data in pairs(stream_data["keys"]) do
             if key_data["type"] ~= "param" then
-              error()
+              error("Found a key of different type than param.")
             end
             params = params .. key_data["name"] .. "=" .. key_data["value"]
           end
-          check(max_data["source"] .. "?" .. params)
+          local newurl = max_data["source"] .. "?" .. params
+          ids[newurl] = true
+          check(newurl)
           local base_url = string.match(max_data["source"], "^(.+/)")
           local format = max_data["template"]["body"]["format"]
           for i, num in pairs(max_data["template"]["body"]["extInfos"]) do
@@ -354,21 +466,24 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
             while string.len(i) < 6 do
               i = "0" .. i
             end
-            check(base_url .. string.gsub(format, "%%06d", i) .. "?" .. params)
+            newurl = base_url .. string.gsub(format, "%%06d", i) .. "?" .. params
+            ids[newurl] = true
+            check(newurl)
           end
         end
         if count ~= 1 then
-          error()
+          error("More than one stream found.")
         end
         count = 0
         for _, sprite_data in pairs(json["thumbnails"]["sprites"]) do
+          count = count + 1
           for i=0,sprite_data["totalPage"] do
             local newurl = string.gsub(sprite_data["source"], "#", tostring(i))
             check(newurl)
           end
         end
         if count ~= 1 then
-          error()
+          error("More than one set of sprites found.")
         end
         for _, thumbnail_data in pairs(json["thumbnails"]["list"]) do
           check(thumbnail_data["source"])
@@ -383,33 +498,73 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
             max_url = video_data["source"]
           end
         end
-        if not max_url then
-          error()
-        end
+        ids[max_url] = true
         check(max_url)
       end
       if string.match(url, "%.m3u8") then
         local params = string.match(url, "%?(.+)$")
         for line in string.gmatch(html, "([^\n]+)") do
           if string.len(line) > 0 and not string.match(line, "^#") then
-            check(urlparse.absolute(url, line) .. "?" .. params)
+            local newurl = urlparse.absolute(url, line) .. "?" .. params
+            ids[newurl] = true
+            check(newurl)
           end
         end
       end
     end
     if string.match(url, "[%?&]appId=") then
       local json = JSON:decode(html)
-      if json["paging"] and json["paging"]["nextParams"] then
-        local params = ""
-        for k, v in pairs(json["paging"]["nextParams"]) do
-          if string.len(params) == 0 then
-            params = params .. "?"
-          else
-            params = params .. "&"
+      extract_from_json(json)
+      if json["paging"] then
+        for k, params_data in pairs(json["paging"]) do
+          io.stdout:write("Found extra page.\n")
+          io.stdout:flush()
+          local params = ""
+          for k, v in pairs(params_data) do
+            if string.len(params) == 0 then
+              params = params .. "?"
+            else
+              params = params .. "&"
+            end
+            params = params .. k .. "=" .. v
           end
-          params = params .. k .. "=" .. v
+          check(urlparse.absolute(url, params))
         end
-        check(urlparse.absolute(url, params))
+      end
+    end
+    if string.match(url, "/comment/v1%.0/[^/]+/comments%?") then
+      local json = JSON:decode(html)
+      extract_from_json(json)
+      for _, comment_data in pairs(json["data"]) do
+        local count = 0
+        if comment_data["latestComments"] then
+          io.stdout:write("Subcomments found.\n")
+          io.stdout:flush()
+          for _ in pairs(comment_data["latestComments"]) do
+            count = count + 1
+          end
+          local comment_count = comment_data["commentCount"]
+          if count > comment_count then
+            error("More comments found than should exist.")
+          end
+          if count < comment_count then
+            if count == 0 then
+              error("No comments found while they should exist.")
+            end
+            local latest_comment = comment_data["latestComments"][1]
+            local created_at = latest_comment["createdAt"]
+            local comment_id = latest_comment["commentId"]
+            local comment_id_parent = latest_comment["parent"]["data"]["commentId"]
+            check(
+              "https://www.vlive.tv/globalv-web/vam-web/comment/v1.0/comment-" .. comment_id_parent .. "/comments"
+              .. "?appId=" .. app_id
+              .. "&before=" .. comment_id .. "," .. created_at
+              .. "&fields=root,parent,commentId,body,emotionCount,commentCount,viewerEmotionId,viewerAvailableActions,createdAt,writtenIn,sticker,author,latestComments,lastModifierMember"
+              .. "&gcc=" .. user_country
+              .. "&locale=" .. locale
+            )
+          end
+        end
       end
     end
     for newurl in string.gmatch(string.gsub(html, "&quot;", '"'), '([^"]+)') do
@@ -451,21 +606,15 @@ wget.callbacks.httploop_result = function(url, err, http_stat)
     return wget.actions.ABORT
   end
 
-  if string.match(url["url"], "^https?://[^/]+/$")
-    and status_code ~= 200
-    and status_code ~= 404 then
-    return wget.actions.ABORT
-  end
-
   find_item(url["url"])
 
-  if status_code >= 300 and status_code <= 399 then
+  --[[if status_code >= 300 and status_code <= 399 then
     local newloc = urlparse.absolute(url["url"], http_stat["newloc"])
     if processed(newloc) or not allowed(newloc, url["url"]) then
       tries = 0
       return wget.actions.EXIT
     end
-  end
+  end]]
   
   if status_code == 200 then
     downloaded[url["url"]] = true
