@@ -460,15 +460,17 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
           ids[newurl] = true
           check(newurl)
           local base_url = string.match(max_data["source"], "^(.+/)")
-          local format = max_data["template"]["body"]["format"]
-          for i, num in pairs(max_data["template"]["body"]["extInfos"]) do
-            i = tostring(i-1)
-            while string.len(i) < 6 do
-              i = "0" .. i
+          if max_data["template"] then
+            local format = max_data["template"]["body"]["format"]
+            for i, num in pairs(max_data["template"]["body"]["extInfos"]) do
+              i = tostring(i-1)
+              while string.len(i) < 6 do
+                i = "0" .. i
+              end
+              newurl = base_url .. string.gsub(format, "%%06d", i) .. "?" .. params
+              ids[newurl] = true
+              check(newurl)
             end
-            newurl = base_url .. string.gsub(format, "%%06d", i) .. "?" .. params
-            ids[newurl] = true
-            check(newurl)
           end
         end
         if count ~= 1 then
@@ -500,6 +502,11 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
         end
         ids[max_url] = true
         check(max_url)
+        if json["captions"] then
+          for _, caption_data in pairs(json["captions"]["list"]) do
+            check(caption_data["source"])
+          end
+        end
       end
       if string.match(url, "%.m3u8") then
         local params = string.match(url, "%?(.+)$")
