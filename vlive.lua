@@ -513,6 +513,9 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
       end
     end
     if string.match(url, "[%?&]appId=") then
+      if string.len(html) == 0 then
+        return urls
+      end
       local json = JSON:decode(html)
       extract_from_json(json)
       if json["paging"] then
