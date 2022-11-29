@@ -491,7 +491,7 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
           check(thumbnail_data["source"])
           check(string.match(thumbnail_data["source"], "^([^%?]+)"))
         end
-        local max_size = nil
+        --[[local max_size = nil
         local max_url = nil
         for _, video_data in pairs(json["videos"]["list"]) do
           local bitrate = video_data["bitrate"]["video"]
@@ -501,7 +501,7 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
           end
         end
         ids[max_url] = true
-        check(max_url)
+        check(max_url)]]
         if json["captions"] then
           for _, caption_data in pairs(json["captions"]["list"]) do
             check(caption_data["source"])
