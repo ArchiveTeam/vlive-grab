@@ -333,7 +333,7 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
   if allowed(url)
     and status_code < 300
     and not string.match(url, "^https?://[^/]*pstatic%.net/")
-    and not string.match(url, "^https?://[^/]*akamaized%.net") then
+    and not string.match(url, "^https?://[^/]*akamaized%.net.+%.ts%?") then
     html = read_file(file)
     if item_type == "video" then
       if string.match(url, "/video/[0-9]+$") then
