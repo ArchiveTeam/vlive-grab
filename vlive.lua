@@ -38,6 +38,7 @@ local channel_code = nil
 local vod_id = nil
 local locale = nil
 local vphinf_types = {}
+local using_ts = false
 
 for vphinf_type in io.open("vphinf-types.txt", "r"):lines() do
   vphinf_types[vphinf_type] = true
@@ -114,6 +115,14 @@ end
 allowed = function(url, parenturl)
   if ids[url] then
     return true
+  end
+
+  if string.match(url, "%.m3u8") and not string.match(url, "%?") then
+    return false
+  end
+
+  if string.match(url, "%.mp4%?") then
+    return false
   end
 
   if string.match(url, "^https?://v%.phinf%.naver%.net/") then
@@ -460,6 +469,7 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
           ids[newurl] = true
           check(newurl)
           local base_url = string.match(max_data["source"], "^(.+/)")
+          using_ts = true
           if max_data["template"] then
             local format = max_data["template"]["body"]["format"]
             for i, num in pairs(max_data["template"]["body"]["extInfos"]) do
