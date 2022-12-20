@@ -486,20 +486,24 @@ wget.callbacks.get_urls = function(file, url, is_css, iri)
         if count ~= 1 then
           error("More than one stream found.")
         end
-        count = 0
-        for _, sprite_data in pairs(json["thumbnails"]["sprites"]) do
-          count = count + 1
-          for i=0,sprite_data["totalPage"] do
-            local newurl = string.gsub(sprite_data["source"], "#", tostring(i))
-            check(newurl)
+        if json["thumbnails"]["sprites"] then
+          count = 0
+          for _, sprite_data in pairs(json["thumbnails"]["sprites"]) do
+            count = count + 1
+            for i=0,sprite_data["totalPage"] do
+              local newurl = string.gsub(sprite_data["source"], "#", tostring(i))
+              check(newurl)
+            end
+          end
+          if count ~= 1 then
+            error("More than one set of sprites found.")
           end
         end
-        if count ~= 1 then
-          error("More than one set of sprites found.")
-        end
-        for _, thumbnail_data in pairs(json["thumbnails"]["list"]) do
-          check(thumbnail_data["source"])
-          check(string.match(thumbnail_data["source"], "^([^%?]+)"))
+        if json["thumbnails"]["list"] then
+          for _, thumbnail_data in pairs(json["thumbnails"]["list"]) do
+            check(thumbnail_data["source"])
+            check(string.match(thumbnail_data["source"], "^([^%?]+)"))
+          end
         end
         --[[local max_size = nil
         local max_url = nil
